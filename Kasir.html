@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    
+    <?!= include('CSS'); ?>
+    <style>
+      /* Style untuk Toggle Switch */
+      .dot {
+        transform: translateX(0);
+        transition: transform 0.3s ease-in-out;
+      }
+      input:checked ~ .dot {
+        transform: translateX(100%);
+      }
+      input:checked + .block { /* Menggunakan sibling selector (+) */
+        background-color: #2563eb; /* Warna biru saat aktif */
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100">
+    <div id="toast-container"></div>
+    <div id="loader-overlay" class="overlay hidden">
+        <div class="flex flex-col items-center">
+            <div class="loader"></div>
+            <p class="text-white mt-2 font-semibold">Memproses...</p>
+        </div>
+    </div>
+    <?!= includeTemplate('Header', {page: page}); ?>
+    
+    <main class="container mx-auto max-w-7xl p-4 pb-24">
+        <div class="flex flex-col md:flex-row gap-6">
+
+            <!-- Kolom Kiri: Daftar Produk -->
+            <div class="w-full md:w-3/5">
+                <div class="bg-white rounded-lg shadow-md p-4">
+                    <div class="flex justify-between items-center pb-4 border-b mb-4">
+                        <h2 class="section-title !p-0 !m-0 !border-0">Pilih Produk</h2>
+                        <label for="online-price-toggle" class="flex items-center cursor-pointer">
+                            <span class="mr-3 text-sm font-medium text-gray-900">Harga Online</span>
+                            <div class="relative">
+                                <input type="checkbox" id="online-price-toggle" class="sr-only">
+                                <div class="block bg-gray-600 w-14 h-8 rounded-full"></div>
+                                <div class="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full"></div>
+                            </div>
+                        </label>
+                    </div>
+                    <div id="product-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                        <!-- Produk akan dimuat di sini -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Kolom Kanan: Keranjang & Pembayaran -->
+            <div class="w-full md:w-2/5">
+                <div class="bg-white rounded-lg shadow-md p-4 sticky top-24">
+                    <h2 class="section-title">Keranjang</h2>
+                    <div id="cart-items" class="space-y-2 mb-4 max-h-64 overflow-y-auto">
+                        <p id="cart-empty-msg" class="text-center text-gray-500 py-8">Keranjang masih kosong</p>
+                    </div>
+                    <div class="border-t pt-4 space-y-2">
+                        <div class="flex justify-between font-semibold">
+                            <span>Total</span>
+                            <span id="cart-total">Rp 0</span>
+                        </div>
+                    </div>
+                    <div class="border-t mt-4 pt-4">
+                        <h3 class="font-semibold mb-2">Pembayaran</h3>
+                        <div>
+                           <label for="payment-method" class="block text-sm font-medium text-gray-700">Metode Pembayaran</label>
+                           <select id="payment-method" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm"></select>
+                        </div>
+                        <div class="mt-2">
+                            <label for="cash-received" class="block text-sm font-medium text-gray-700">Uang Diterima (Rp)</label>
+                            <input type="number" id="cash-received" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm text-lg p-2 text-right" placeholder="0">
+                        </div>
+                        <div class="flex justify-between mt-2 text-lg">
+                            <span class="font-semibold">Kembalian:</span>
+                            <span id="change-due" class="font-bold text-blue-600">Rp 0</span>
+                        </div>
+                        <div class="flex gap-2 mt-4">
+                            <button id="process-payment-btn" class="flex-1 bg-green-600 text-white font-bold py-3 px-4 rounded-md hover:bg-green-700 text-lg">Bayar</button>
+                            <button id="print-receipt-btn" class="flex-1 bg-blue-600 text-white font-bold py-3 px-4 rounded-md hover:bg-blue-700 text-lg">Bayar & Struk</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <?!= includeTemplate('BottomNav', {page: page}); ?>
+
+    <script>
+      // =================================================================
+      // BAGIAN 1: DEKLARASI VARIABEL
+      // =================================================================
+      const loader = document.getElementById('loader-overlay');
+      const productGrid = document.getElementById('product-grid');
+      const cartItemsDiv = document.getElementById('cart-items');
+      const cartEmptyMsg = document.getElementById('cart-empty-msg');
+      const cartTotalSpan = document.getElementById('cart-total');
+      const cashReceivedInput = document.getElementById('cash-received');
+      const changeDueSpan = document.getElementById('change-due');
+      const processPaymentBtn = document.getElementById('process-payment-btn');
+      const printReceiptBtn = document.getElementById('print-receipt-btn');
+      const onlinePriceToggle = document.getElementById('online-price-toggle');
+      const paymentMethodSelect = document.getElementById('payment-method');
+
+      let allProducts = [];
+      let cart = [];
+      let appSettings = {};
+
+      // =================================================================
+      // BAGIAN 2: FUNGSI UTILITAS (TIDAK BERUBAH)
+      // =================================================================
+      function showToast(message, type = 'success') {
+          const toastContainer = document.getElementById('toast-container');
+          if (!toastContainer) return;
+          const toast = document.createElement('div');
+          toast.className = `toast ${type}`;
+          toast.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-times-circle'}"></i><span>${message}</span>`;
+          toastContainer.appendChild(toast);
+          setTimeout(() => { toast.remove(); }, 4000);
+      }
+      function showLoader() { loader.classList.remove('hidden'); }
+      function hideLoader() { loader.classList.add('hidden'); }
+      function formatCurrency(value) { return 'Rp ' + Number(value).toLocaleString('id-ID'); }
+
+      // =================================================================
+      // BAGIAN 3: FUNGSI INTI (DENGAN PERBAIKAN)
+      // =================================================================
+
+      // Fungsi Utama yang dipanggil saat halaman dimuat
+      function initializeKasirPage() {
+        console.log("Memulai inisialisasi halaman Kasir...");
+        showLoader();
+        google.script.run
+          .withSuccessHandler(onDataReceived)
+          .withFailureHandler(onDataError)
+          .getKasirData();
+      }
+
+      // Fungsi yang dijalankan jika data BERHASIL diterima dari backend
+      function onDataReceived(data) {
+        // PENTING: Log ini untuk melihat data mentah dari server
+        console.log("Data berhasil diterima dari server:", JSON.stringify(data, null, 2));
+        
+        // Memastikan data yang diterima valid sebelum digunakan
+        allProducts = data.products || [];
+        appSettings = data.settings || {};
+
+        populatePaymentMethods();
+        renderProducts();
+        hideLoader();
+        console.log("Inisialisasi selesai. Produk dan metode pembayaran telah ditampilkan.");
+      }
+
+      // Fungsi yang dijalankan jika GAGAL menerima data
+      function onDataError(error) {
+        console.error("Gagal memuat data dari server:", error);
+        hideLoader();
+        showToast('Error: ' + error.message, 'error');
+      }
+
+      // Mengisi dropdown metode pembayaran
+      function populatePaymentMethods() {
+        paymentMethodSelect.innerHTML = '';
+        const methods = (appSettings.metodePembayaran || 'Tunai').split(',');
+        methods.forEach(method => {
+            const trimmedMethod = method.trim();
+            if (trimmedMethod) {
+              const option = document.createElement('option');
+              option.value = trimmedMethod;
+              option.textContent = trimmedMethod;
+              paymentMethodSelect.appendChild(option);
+            }
+        });
+      }
+
+      // Menampilkan produk ke layar
+      function renderProducts() {
+        productGrid.innerHTML = '';
+        const isOnline = onlinePriceToggle.checked;
+        const markup = 1 + (Number(appSettings.pajakGrabFood || 0) / 100);
+        const batasStok = Number(appSettings.batasStokMinimum || 0);
+
+        const availableProducts = allProducts.filter(p => p.stock > 0);
+        if (availableProducts.length === 0) {
+            productGrid.innerHTML = `<p class="col-span-full text-center text-gray-500 py-8">Semua produk habis atau belum ada.</p>`;
+            return;
+        }
+
+        availableProducts.forEach(p => {
+          const displayPrice = isOnline ? Math.ceil((p.price * markup) / 500) * 500 : p.price;
+          const card = document.createElement('div');
+          card.className = 'border rounded-lg p-2 text-center cursor-pointer hover:bg-gray-100 hover:shadow-md transition-shadow';
+          card.dataset.id = p.id;
+          
+          let stockWarning = '';
+          if (p.stock > 0 && p.stock <= batasStok) {
+              card.classList.add('border-red-400', 'bg-red-50');
+              stockWarning = `<div class="text-xs text-red-600 font-bold">Stok Menipis!</div>`;
+          }
+
+          card.innerHTML = `<div class="font-semibold text-sm">${p.name}</div><div class="text-xs text-gray-500">Stok: ${p.stock}</div>${stockWarning}<div class="text-blue-600 font-bold mt-1">${formatCurrency(displayPrice)}</div>`;
+          card.addEventListener('click', () => addToCart(p.id));
+          productGrid.appendChild(card);
+        });
+      }
+
+      // Menambahkan item ke keranjang
+      function addToCart(productId) {
+        const product = allProducts.find(p => p.id === productId);
+        if (!product) return;
+        const isOnline = onlinePriceToggle.checked;
+        const markup = 1 + (Number(appSettings.pajakGrabFood || 0) / 100);
+        const displayPrice = isOnline ? Math.ceil((product.price * markup) / 500) * 500 : product.price;
+        if (cart.length > 0 && cart[0].isOnline !== isOnline) { showToast('Tidak bisa mencampur harga online dan offline.', 'error'); return; }
+        const cartItem = cart.find(item => item.id === productId);
+        if (cartItem) {
+          if (cartItem.qty < product.stock) cartItem.qty++; else showToast(`Stok ${product.name} tidak mencukupi!`, 'error');
+        } else {
+          cart.push({ id: product.id, name: product.name, price: displayPrice, qty: 1, isOnline: isOnline });
+        }
+        renderCart();
+      }
+
+      // Memproses pembayaran
+      function processAndPay(printReceipt = false) {
+          if (cart.length === 0) { showToast('Keranjang masih kosong!', 'error'); return; }
+          const totalSale = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+          const cashReceived = parseFloat(cashReceivedInput.value) || 0;
+          if (paymentMethodSelect.value.toLowerCase() === 'tunai' && cashReceived < totalSale) { showToast('Uang yang diterima kurang!', 'error'); return; }
+          const transactionData = {
+              cart: cart,
+              totalSale: totalSale,
+              totalItems: cart.reduce((sum, item) => sum + item.qty, 0),
+              cashReceived: cashReceived,
+              paymentMethod: paymentMethodSelect.value,
+              saleType: cart.length > 0 && cart[0].isOnline ? 'Online' : 'Offline'
+          };
+          
+          showLoader();
+          google.script.run
+            .withSuccessHandler(response => {
+                showToast(response.message, response.success ? 'success' : 'error');
+                if (response.success) {
+                    if (printReceipt) generateAndShareReceipt(transactionData);
+                    cart = [];
+                    cashReceivedInput.value = '';
+                    renderCart();
+                    google.script.run.withSuccessHandler(products => {
+                        allProducts = products || [];
+                        renderProducts();
+                        hideLoader();
+                    }).withFailureHandler(onDataError).getProducts();
+                } else {
+                  hideLoader();
+                }
+            })
+            .withFailureHandler(onDataError)
+            .recordTransaction(transactionData);
+      }
+
+      // Membuat struk
+      // Membuat dan Menampilkan Struk
+      function generateAndShareReceipt(txData) {
+          console.log("Memulai pembuatan struk...");
+          // Loader sudah aktif dari fungsi processAndPay, jadi kita biarkan saja.
+          google.script.run
+              .withSuccessHandler(onReceiptGenerated)
+              .withFailureHandler(onReceiptError)
+              .createReceiptPdf(txData, appSettings); // Kirim data transaksi & pengaturan toko ke server
+      }
+
+      // Fungsi jika struk BERHASIL dibuat oleh server
+      function onReceiptGenerated(url) {
+          console.log("Struk berhasil dibuat. URL:", url);
+          hideLoader(); // Sembunyikan loader sekarang setelah semua proses selesai
+          if (url) {
+              window.open(url, '_blank'); // Buka PDF struk di tab baru
+          } else {
+              showToast("Gagal mendapatkan URL struk.", "error");
+          }
+      }
+
+      // Fungsi jika struk GAGAL dibuat oleh server
+      function onReceiptError(error) {
+          console.error("Gagal membuat struk:", error);
+          hideLoader(); // Sembunyikan loader jika terjadi error
+          showToast("Error saat membuat struk: " + error.message, 'error');
+      }
+
+      // =================================================================
+      // BAGIAN 4: FUNGSI ASLI ANDA (TIDAK DIUBAH)
+      // =================================================================
+      function renderCart() {
+        cartItemsDiv.innerHTML = '';
+        if (cart.length === 0) {
+          cartItemsDiv.appendChild(cartEmptyMsg);
+          cartEmptyMsg.classList.remove('hidden');
+        } else {
+          cartEmptyMsg.classList.add('hidden');
+          cart.forEach(item => {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'flex justify-between items-center text-sm';
+            itemDiv.innerHTML = `<div><div class="font-semibold">${item.name}</div><div class="text-gray-500">${formatCurrency(item.price)}</div></div><div class="flex items-center space-x-2"><button data-id="${item.id}" class="qty-change-btn bg-gray-200 rounded-full w-6 h-6 font-bold">-</button><span>${item.qty}</span><button data-id="${item.id}" class="qty-change-btn bg-gray-200 rounded-full w-6 h-6 font-bold">+</button></div>`;
+            cartItemsDiv.appendChild(itemDiv);
+          });
+        }
+        updateTotal();
+      }
+      function updateTotal() {
+          const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+          cartTotalSpan.textContent = formatCurrency(total);
+          updateChange();
+      }
+      function updateChange() {
+          const total = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+          const cash = parseFloat(cashReceivedInput.value) || 0;
+          const change = cash - total;
+          changeDueSpan.textContent = formatCurrency(change >= 0 ? change : 0);
+      }
+      function changeQuantity(productId, amount) {
+          const cartItemIndex = cart.findIndex(item => item.id === productId);
+          if (cartItemIndex === -1) return;
+          const cartItem = cart[cartItemIndex];
+          const product = allProducts.find(p => p.id === productId);
+          const newQty = cartItem.qty + amount;
+          if (newQty > product.stock) { showToast(`Stok ${product.name} tidak mencukupi!`, 'error'); return; }
+          if (newQty <= 0) { cart.splice(cartItemIndex, 1); } else { cartItem.qty = newQty; }
+          renderCart();
+      }
+      
+      // =================================================================
+      // BAGIAN 5: EVENT LISTENERS
+      // =================================================================
+      document.addEventListener('DOMContentLoaded', initializeKasirPage);
+      
+      onlinePriceToggle.addEventListener('change', () => {
+          if (cart.length > 0) {
+              showToast('Kosongkan keranjang untuk mengubah tipe harga.', 'error');
+              onlinePriceToggle.checked = !onlinePriceToggle.checked;
+              return;
+          }
+          renderProducts();
+      });
+      
+      cartItemsDiv.addEventListener('click', e => { if (e.target.classList.contains('qty-change-btn')) { const productId = e.target.dataset.id; const amount = e.target.textContent === '+' ? 1 : -1; changeQuantity(productId, amount); } });
+      cashReceivedInput.addEventListener('input', updateChange);
+      processPaymentBtn.addEventListener('click', () => processAndPay(false));
+      printReceiptBtn.addEventListener('click', () => processAndPay(true));
+    </script>
+  </body>
+</html>
